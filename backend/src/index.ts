@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import path from 'path';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import { PrismaClient } from '@prisma/client';
@@ -99,18 +100,17 @@ app.post('/api/payment/callback', async (req, res) => {
   }
 });
 
-// ============ CORS CONFIG (DIPERBAIKI) ============
+// ============ CORS CONFIG ============
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:5002',
   'https://laundry-ultimate-final.vercel.app',
-  'https://laundry-ultimate-final.vercel.app/',
-  /\.vercel\.app$/  // Allow all vercel.app subdomains
+  /\.vercel\.app$/,
+  /\.netlify\.app$/
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     if (allowedOrigins.some(allowed => allowed === origin || (allowed instanceof RegExp && allowed.test(origin)))) {
       callback(null, true);
@@ -161,6 +161,15 @@ app.get('/api/test', (req, res) => {
     timestamp: new Date().toISOString(),
     cors: 'enabled'
   });
+});
+
+// ============ SERVE FRONTEND STATIC FILES ============
+// Sajikan file statis dari folder public (hasil build frontend)
+app.use(express.static(path.join(__dirname, '../public')));
+
+// Semua request yang tidak masuk ke API akan diarahkan ke index.html (React Router)
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
 // ============ CRON JOB FOR IoT TIMER (SETIAP MENIT) ============
@@ -265,7 +274,8 @@ httpServer.listen(PORT, () => {
   console.log(`   Test API: http://localhost:${PORT}/api/test`);
   console.log(`   Webhook: http://localhost:${PORT}/api/payment/notification`);
   console.log(`   Callback: http://localhost:${PORT}/api/payment/callback`);
-  console.log(`   CORS: Enabled for Vercel & Localhost`);
+  console.log(`   Frontend: http://localhost:${PORT}`);
+  console.log(`   CORS: Enabled`);
   console.log(`   Cron job: Timer update every minute`);
   console.log(`   ========================================\n`);
 });

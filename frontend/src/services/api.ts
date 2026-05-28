@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+// Gunakan environment variable VITE_API_URL, fallback ke localhost untuk development
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5002';
+
 const api = axios.create({
-  baseURL: 'http://localhost:5002/api',
+  baseURL: `${API_BASE_URL}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
