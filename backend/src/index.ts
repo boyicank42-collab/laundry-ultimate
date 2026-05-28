@@ -32,15 +32,105 @@ dotenv.config();
 export const prisma = new PrismaClient();
 const app = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  cors: { origin: 'http://localhost:5173', credentials: true }
+
+// ============ MIDTRANS WEBHOOK (DI LUAR MIDDLEWARE) ============
+app.use('/api/payment/notification', express.raw({ type: 'application/json' }));
+app.use('/api/payment/callback', express.raw({ type: 'application/json' }));
+
+app.post('/api/payment/notification', async (req, res) => {
+  try {
+    const notification = JSON.parse(req.body);
+    console.log('📢 [WEBHOOK] Midtrans notification:', notification);
+    
+    const { order_id, transaction_status, payment_type } = notification;
+    
+    let paymentStatus = 'PENDING';
+    if (transaction_status === 'capture' || transaction_status === 'settlement') {
+      paymentStatus = 'LUNAS';
+    } else if (transaction_status === 'deny' || transaction_status === 'expire' || transaction_status === 'cancel') {
+      paymentStatus = 'BATAL';
+    }
+    
+    await prisma.transaction.update({
+      where: { invoice: order_id },
+      data: { 
+        paymentStatus: paymentStatus,
+        paymentMethod: payment_type,
+        paidAt: paymentStatus === 'LUNAS' ? new Date() : null
+      }
+    });
+    
+    console.log(`✅ Transaksi ${order_id} updated to ${paymentStatus}`);
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('❌ Webhook error:', error);
+    res.sendStatus(500);
+  }
 });
 
-app.use(helmet());
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
-app.use(express.json());
+app.post('/api/payment/callback', async (req, res) => {
+  try {
+    const notification = JSON.parse(req.body);
+    console.log('📢 [CALLBACK] Midtrans notification:', notification);
+    
+    const { order_id, transaction_status, payment_type } = notification;
+    
+    let paymentStatus = 'PENDING';
+    if (transaction_status === 'capture' || transaction_status === 'settlement') {
+      paymentStatus = 'LUNAS';
+    } else if (transaction_status === 'deny' || transaction_status === 'expire' || transaction_status === 'cancel') {
+      paymentStatus = 'BATAL';
+    }
+    
+    await prisma.transaction.update({
+      where: { invoice: order_id },
+      data: { 
+        paymentStatus: paymentStatus,
+        paymentMethod: payment_type,
+        paidAt: paymentStatus === 'LUNAS' ? new Date() : null
+      }
+    });
+    
+    console.log(`✅ Transaksi ${order_id} updated to ${paymentStatus}`);
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('❌ Callback error:', error);
+    res.sendStatus(500);
+  }
+});
 
-// API Routes
+// ============ CORS CONFIG (DIPERBAIKI) ============
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:5002',
+  'https://laundry-ultimate-final.vercel.app',
+  'https://laundry-ultimate-final.vercel.app/',
+  /\.vercel\.app$/  // Allow all vercel.app subdomains
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.some(allowed => allowed === origin || (allowed instanceof RegExp && allowed.test(origin)))) {
+      callback(null, true);
+    } else {
+      console.log('🚫 CORS blocked origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+}));
+
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ============ API ROUTES ============
 app.use('/api/auth', authRoutes);
 app.use('/api/transactions', transactionRoutes);
 app.use('/api/customers', customerRoutes);
@@ -68,7 +158,8 @@ app.get('/api/test', (req, res) => {
     message: 'Laundry Ultimate Enterprise Backend',
     version: '3.0',
     status: 'running',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    cors: 'enabled'
   });
 });
 
@@ -114,21 +205,22 @@ cron.schedule('* * * * *', async () => {
 
 console.log('✅ Cron job registered: Timer akan update setiap menit');
 
-// WebSocket connections
-// Di dalam file index.ts, cari bagian io.on('connection')
-// Tambahkan kode ini:
+// ============ WEBSOCKET (SOCKET.IO) ============
+const io = new Server(httpServer, {
+  cors: {
+    origin: allowedOrigins,
+    credentials: true
+  }
+});
 
 io.on('connection', (socket) => {
   console.log('📡 Client connected:', socket.id);
 
   socket.on('join-outlet', (outlet) => socket.join(`outlet-${outlet}`));
-
-  // Join device room untuk real-time timer
   socket.on('join-device', (deviceId) => {
     socket.join(`device-${deviceId}`);
     console.log(`📡 Client joined device: ${deviceId}`);
   });
-
   socket.on('disconnect', () => console.log('📡 Client disconnected:', socket.id));
 });
 
@@ -163,6 +255,7 @@ setInterval(async () => {
 
 export { io };
 
+// ============ START SERVER ============
 const PORT = process.env.PORT || 5002;
 httpServer.listen(PORT, () => {
   console.log(`\n🚀 ========================================`);
@@ -170,6 +263,9 @@ httpServer.listen(PORT, () => {
   console.log(`   ========================================`);
   console.log(`   Backend running on http://localhost:${PORT}`);
   console.log(`   Test API: http://localhost:${PORT}/api/test`);
+  console.log(`   Webhook: http://localhost:${PORT}/api/payment/notification`);
+  console.log(`   Callback: http://localhost:${PORT}/api/payment/callback`);
+  console.log(`   CORS: Enabled for Vercel & Localhost`);
   console.log(`   Cron job: Timer update every minute`);
   console.log(`   ========================================\n`);
 });
